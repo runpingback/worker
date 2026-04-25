@@ -110,6 +110,76 @@ func TestDispatch_Failure(t *testing.T) {
 	}
 }
 
+func TestDispatch_WithPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Errorf("failed to unmarshal request body: %v", err)
+		}
+		if _, ok := payload["payload"]; !ok {
+			t.Error("expected 'payload' field in request body, but it was missing")
+		}
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]any{})
+	}))
+	defer server.Close()
+
+	d := &Dispatcher{Client: server.Client()}
+	result, err := d.Dispatch(context.Background(), DispatchRequest{
+		EndpointURL:    server.URL,
+		CronSecret:     "secret",
+		FunctionName:   "my-fn",
+		ExecutionID:    "exec-42",
+		Attempt:        1,
+		ScheduledAt:    "2026-04-25T12:00:00Z",
+		TimeoutSeconds: 10,
+		Payload:        json.RawMessage(`{"user_id":"abc"}`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("expected success, got http status %d", result.HttpStatus)
+	}
+}
+
+func TestDispatch_LargeResponseTruncated(t *testing.T) {
+	const maxResponseBytes = 1024 * 1024 // 1MB
+
+	// Build a response body that is larger than maxResponseBytes.
+	largeBody := make([]byte, maxResponseBytes+1024)
+	for i := range largeBody {
+		largeBody[i] = 'x'
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write(largeBody)
+	}))
+	defer server.Close()
+
+	d := &Dispatcher{Client: server.Client()}
+	result, err := d.Dispatch(context.Background(), DispatchRequest{
+		EndpointURL:    server.URL,
+		CronSecret:     "secret",
+		FunctionName:   "big-response",
+		ExecutionID:    "exec-43",
+		Attempt:        1,
+		ScheduledAt:    "2026-04-25T12:00:00Z",
+		TimeoutSeconds: 10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ResponseBody) > maxResponseBytes {
+		t.Errorf("expected ResponseBody to be truncated to %d bytes, got %d bytes", maxResponseBytes, len(result.ResponseBody))
+	}
+	if len(result.ResponseBody) != maxResponseBytes {
+		t.Errorf("expected ResponseBody length to be exactly %d (the read limit), got %d", maxResponseBytes, len(result.ResponseBody))
+	}
+}
+
 func TestDispatch_Timeout(t *testing.T) {
 	serverCtx, serverCancel := context.WithCancel(context.Background())
 	defer serverCancel()
