@@ -24,7 +24,7 @@ func Load() (Config, error) {
 
 	return Config{
 		DatabaseURL:     dbURL,
-		PollInterval:    durationEnv("POLL_INTERVAL", 500*time.Millisecond),
+		PollInterval:    durationEnv("POLL_INTERVAL", 200*time.Millisecond),
 		PollBatchSize:   intEnv("POLL_BATCH_SIZE", 20),
 		WorkerPoolSize:  intEnv("WORKER_POOL_SIZE", 20),
 		LogLevel:        stringEnv("LOG_LEVEL", "info"),

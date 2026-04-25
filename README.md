@@ -1,6 +1,6 @@
 # Pingback Worker
 
-Standalone Go binary that processes Pingback job executions. Replaces the NestJS worker.
+Standalone Go binary that processes Pingback job executions.
 
 Polls the pgboss queue directly via PostgreSQL, dispatches HMAC-signed HTTP requests to user endpoints, handles retries with exponential backoff, fan-out task dispatch, and plan limit enforcement.
 

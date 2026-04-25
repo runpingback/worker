@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/runpingback/worker/internal/db"
@@ -67,25 +68,40 @@ func New(queue QueueClient, store Store, dispatcher *Dispatcher) *Processor {
 func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMessage) error {
 	log := slog.With("execution_id", msg.ExecutionID, "function", msg.FunctionName)
 
-	// 1. Mark execution running
-	if err := p.Store.MarkRunning(ctx, msg.ExecutionID); err != nil {
-		log.Error("failed to mark running", "error", err)
-		_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
-		return err
-	}
+	// 1-2. Mark running + load project/user in parallel
+	var (
+		pu      *db.ProjectUser
+		markErr error
+		loadErr error
+		wg      sync.WaitGroup
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		markErr = p.Store.MarkRunning(ctx, msg.ExecutionID)
+	}()
+	go func() {
+		defer wg.Done()
+		pu, loadErr = p.Store.LoadProjectUser(ctx, msg.ProjectID)
+	}()
+	wg.Wait()
 
 	startedAt := time.Now()
 
-	// 2. Load project + user
-	pu, err := p.Store.LoadProjectUser(ctx, msg.ProjectID)
-	if err != nil {
-		log.Error("failed to load project/user", "error", err)
+	if markErr != nil {
+		log.Error("failed to mark running", "error", markErr)
+		_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
+		return markErr
+	}
+	if loadErr != nil {
+		log.Error("failed to load project/user", "error", loadErr)
 		_ = p.Store.MarkFailed(ctx, msg.ExecutionID, db.FailResult{
 			ErrorMessage: "failed to load project",
 			DurationMs:   time.Since(startedAt).Milliseconds(),
 		})
 		_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
-		return err
+		return loadErr
 	}
 
 	// 3. Plan limit check
@@ -144,14 +160,24 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 	if result.Success {
 		log.Info("job completed", "status", "success", "duration_ms", durationMs, "http_status", result.HttpStatus)
 
-		_ = p.Store.MarkSuccess(ctx, msg.ExecutionID, db.SuccessResult{
-			HttpStatus:   result.HttpStatus,
-			ResponseBody: result.ResponseBody,
-			Logs:         result.Logs,
-			DurationMs:   durationMs,
-		})
+		// Mark success + complete pgboss in parallel
+		var successWg sync.WaitGroup
+		successWg.Add(2)
+		go func() {
+			defer successWg.Done()
+			_ = p.Store.MarkSuccess(ctx, msg.ExecutionID, db.SuccessResult{
+				HttpStatus:   result.HttpStatus,
+				ResponseBody: result.ResponseBody,
+				Logs:         result.Logs,
+				DurationMs:   durationMs,
+			})
+		}()
+		go func() {
+			defer successWg.Done()
+			_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
+		}()
 
-		// Fan-out
+		// Fan-out while DB writes happen
 		if len(result.Tasks) > 0 {
 			capped := limits.CapFanOut(pu.Plan, result.Tasks)
 			if len(capped) < len(result.Tasks) {
@@ -160,7 +186,7 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 			p.dispatchFanOut(ctx, msg, capped)
 		}
 
-		_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
+		successWg.Wait()
 		return nil
 	}
 
@@ -211,19 +237,29 @@ func (p *Processor) handleFailure(ctx context.Context, pgbossJobID string, msg Q
 		return
 	}
 
-	// Permanent failure
+	// Permanent failure — run all three in parallel
 	log.Error("permanently failed", "attempts", msg.Attempt)
-	_ = p.Store.MarkFailed(ctx, msg.ExecutionID, fail)
-	_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
-
-	// Fire alert event
-	alertData := map[string]string{
-		"jobId":       msg.JobID,
-		"executionId": msg.ExecutionID,
-	}
-	if err := p.Queue.Insert(ctx, queueAlert, alertData, 0); err != nil {
-		log.Error("failed to enqueue alert", "error", err)
-	}
+	var failWg sync.WaitGroup
+	failWg.Add(3)
+	go func() {
+		defer failWg.Done()
+		_ = p.Store.MarkFailed(ctx, msg.ExecutionID, fail)
+	}()
+	go func() {
+		defer failWg.Done()
+		_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
+	}()
+	go func() {
+		defer failWg.Done()
+		alertData := map[string]string{
+			"jobId":       msg.JobID,
+			"executionId": msg.ExecutionID,
+		}
+		if err := p.Queue.Insert(ctx, queueAlert, alertData, 0); err != nil {
+			log.Error("failed to enqueue alert", "error", err)
+		}
+	}()
+	failWg.Wait()
 }
 
 func buildRetryMessage(msg QueueMessage) QueueMessage {
