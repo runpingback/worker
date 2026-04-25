@@ -53,8 +53,14 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Postgres connection pool
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	// Postgres connection pool with pre-warmed connections
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("failed to parse database config", "error", err)
+		os.Exit(1)
+	}
+	poolCfg.MinConns = 4 // keep connections warm
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		slog.Error("failed to connect to database", "error", err)
 		os.Exit(1)
@@ -67,10 +73,19 @@ func main() {
 	}
 	slog.Info("connected to database")
 
+	// HTTP client with tuned transport for connection reuse
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
 	// Initialize components
 	pgbossClient := pgboss.New(pool)
 	store := db.NewStore(pool)
-	dispatcher := &processor.Dispatcher{Client: &http.Client{}}
+	dispatcher := &processor.Dispatcher{Client: httpClient}
 	proc := processor.New(pgbossClient, store, dispatcher)
 
 	// Handler bridges pipeline.Job -> processor.Process
