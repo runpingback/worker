@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 	"github.com/runpingback/worker/internal/config"
 	"github.com/runpingback/worker/internal/db"
 	"github.com/runpingback/worker/internal/pgboss"
@@ -20,6 +21,7 @@ import (
 )
 
 func main() {
+	_ = godotenv.Load() // .env is optional — env vars can be set directly
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
