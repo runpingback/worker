@@ -30,7 +30,6 @@ type Store interface {
 	LoadProjectUser(ctx context.Context, projectID string) (*db.ProjectUser, error)
 	ResetMonthlyQuota(ctx context.Context, userID string) error
 	IncrementExecutions(ctx context.Context, userID string) error
-	NeedsQuotaReset(resetAt *time.Time) bool
 	FindJobByName(ctx context.Context, projectID string, name string) (*db.JobRecord, error)
 	CreatePendingExecution(ctx context.Context, p db.CreateExecParams) (string, error)
 }
@@ -90,7 +89,7 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 	}
 
 	// 3. Plan limit check
-	if p.Store.NeedsQuotaReset(pu.ExecutionsResetAt) {
+	if db.NeedsQuotaReset(pu.ExecutionsResetAt) {
 		if err := p.Store.ResetMonthlyQuota(ctx, pu.UserID); err != nil {
 			log.Error("failed to reset quota", "error", err)
 		} else {
@@ -111,6 +110,9 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 	if err := p.Store.IncrementExecutions(ctx, pu.UserID); err != nil {
 		log.Error("failed to increment executions", "error", err)
 	}
+
+	// Cap retries to plan limit
+	msg.MaxRetries = limits.CapRetries(pu.Plan, msg.MaxRetries)
 
 	// 4-5. Dispatch HTTP request
 	log.Info("dispatching", "attempt", msg.Attempt, "endpoint", pu.EndpointURL)

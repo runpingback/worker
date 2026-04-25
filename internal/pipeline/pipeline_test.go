@@ -91,10 +91,18 @@ func TestPool_PanicRecovery(t *testing.T) {
 type mockClaimer struct {
 	batches [][]Job
 	callNum int
+	done    chan struct{}
 }
 
 func (m *mockClaimer) Claim(ctx context.Context, queue string, batchSize int) ([]Job, error) {
 	if m.callNum >= len(m.batches) {
+		if m.done != nil {
+			select {
+			case <-m.done:
+			default:
+				close(m.done)
+			}
+		}
 		return nil, nil
 	}
 	batch := m.batches[m.callNum]
@@ -103,20 +111,28 @@ func (m *mockClaimer) Claim(ctx context.Context, queue string, batchSize int) ([
 }
 
 func TestPoller_PushesJobsToChannel(t *testing.T) {
+	done := make(chan struct{})
 	claimer := &mockClaimer{
 		batches: [][]Job{
 			{{ID: "1", Data: []byte(`{}`)}},
 			{{ID: "2", Data: []byte(`{}`)}},
 		},
+		done: done,
 	}
 
 	jobs := make(chan Job, 10)
-	poller := NewPoller(claimer, "pingback-execution", 5, 50*time.Millisecond, jobs)
+	poller := NewPoller(claimer, "pingback-execution", 5, 10*time.Millisecond, jobs)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go poller.Start(ctx)
 
-	time.Sleep(200 * time.Millisecond)
+	// Wait until claimer has exhausted all batches
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for poller to claim all batches")
+	}
+
 	cancel()
 	close(jobs)
 
@@ -125,7 +141,7 @@ func TestPoller_PushesJobsToChannel(t *testing.T) {
 		received = append(received, j)
 	}
 
-	if len(received) < 2 {
-		t.Errorf("expected at least 2 jobs, got %d", len(received))
+	if len(received) != 2 {
+		t.Errorf("expected 2 jobs, got %d", len(received))
 	}
 }

@@ -3,6 +3,8 @@ package processor
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -63,12 +65,6 @@ func (m *mockStore) IncrementExecutions(ctx context.Context, userID string) erro
 	m.incrementCalled = true
 	return nil
 }
-func (m *mockStore) NeedsQuotaReset(resetAt *time.Time) bool {
-	if resetAt == nil {
-		return true
-	}
-	return time.Now().After(*resetAt)
-}
 func (m *mockStore) FindJobByName(ctx context.Context, projectID string, name string) (*db.JobRecord, error) {
 	return nil, nil
 }
@@ -101,6 +97,41 @@ func defaultProjectUser() *db.ProjectUser {
 		Plan:                "pro",
 		ExecutionsThisMonth: 100,
 		ExecutionsResetAt:   &future,
+	}
+}
+
+func TestProcess_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]any{
+			"logs":  []map[string]any{{"timestamp": 123, "level": "info", "message": "ok"}},
+			"tasks": []any{},
+		})
+	}))
+	defer server.Close()
+
+	pu := defaultProjectUser()
+	pu.EndpointURL = server.URL
+	store := &mockStore{projectUser: pu}
+	queue := &mockQueue{}
+	p := &Processor{Queue: queue, Store: store, Dispatcher: &Dispatcher{Client: server.Client()}}
+
+	msg := newTestMsg()
+	err := p.Process(context.Background(), "pgboss-job-1", msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !store.markRunningCalled {
+		t.Error("expected execution marked running")
+	}
+	if !store.markSuccessCalled {
+		t.Error("expected execution marked success")
+	}
+	if !store.incrementCalled {
+		t.Error("expected executions incremented")
+	}
+	if len(queue.completeCalls) != 1 {
+		t.Error("expected pgboss job completed")
 	}
 }
 

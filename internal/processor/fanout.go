@@ -2,7 +2,6 @@ package processor
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -45,8 +44,7 @@ func (p *Processor) dispatchFanOut(ctx context.Context, parent QueueMessage, tas
 			ScheduledAt:    time.Now().UTC().Format(time.RFC3339Nano),
 		}
 		if task.Payload != nil {
-			payload, _ := json.Marshal(task.Payload)
-			childMsg.Payload = payload
+			childMsg.Payload = task.Payload
 		}
 
 		if err := p.Queue.Insert(ctx, queueExecution, childMsg, 0); err != nil {

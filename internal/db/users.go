@@ -11,7 +11,7 @@ func nextMonthReset() time.Time {
 	return time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 }
 
-func (s *Store) NeedsQuotaReset(resetAt *time.Time) bool {
+func NeedsQuotaReset(resetAt *time.Time) bool {
 	if resetAt == nil {
 		return true
 	}

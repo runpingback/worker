@@ -89,7 +89,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req DispatchRequest) (*Dispat
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	const maxResponseBytes = 1024 * 1024 // 1MB
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	respText := string(respBody)
 
 	result := &DispatchResult{

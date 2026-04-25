@@ -6,24 +6,22 @@ import (
 )
 
 func TestNeedsQuotaReset(t *testing.T) {
-	s := &Store{}
-
 	t.Run("nil reset time", func(t *testing.T) {
-		if !s.NeedsQuotaReset(nil) {
+		if !NeedsQuotaReset(nil) {
 			t.Error("expected true for nil reset time")
 		}
 	})
 
 	t.Run("past reset time", func(t *testing.T) {
 		past := time.Now().Add(-time.Hour)
-		if !s.NeedsQuotaReset(&past) {
+		if !NeedsQuotaReset(&past) {
 			t.Error("expected true for past reset time")
 		}
 	})
 
 	t.Run("future reset time", func(t *testing.T) {
 		future := time.Now().Add(time.Hour)
-		if s.NeedsQuotaReset(&future) {
+		if NeedsQuotaReset(&future) {
 			t.Error("expected false for future reset time")
 		}
 	})
