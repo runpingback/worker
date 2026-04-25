@@ -68,6 +68,8 @@ func New(queue QueueClient, store Store, dispatcher *Dispatcher) *Processor {
 func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMessage) error {
 	log := slog.With("execution_id", msg.ExecutionID, "function", msg.FunctionName)
 
+	t0 := time.Now()
+
 	// 1-2. Mark running + load project/user in parallel
 	var (
 		pu      *db.ProjectUser
@@ -87,7 +89,7 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 	}()
 	wg.Wait()
 
-	startedAt := time.Now()
+	t1 := time.Now()
 
 	if markErr != nil {
 		log.Error("failed to mark running", "error", markErr)
@@ -98,7 +100,7 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 		log.Error("failed to load project/user", "error", loadErr)
 		_ = p.Store.MarkFailed(ctx, msg.ExecutionID, db.FailResult{
 			ErrorMessage: "failed to load project",
-			DurationMs:   time.Since(startedAt).Milliseconds(),
+			DurationMs:   time.Since(t1).Milliseconds(),
 		})
 		_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
 		return loadErr
@@ -117,7 +119,7 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 		log.Warn("plan limit reached", "user_id", pu.UserID, "plan", pu.Plan)
 		_ = p.Store.MarkFailed(ctx, msg.ExecutionID, db.FailResult{
 			ErrorMessage: "Monthly execution limit reached",
-			DurationMs:   time.Since(startedAt).Milliseconds(),
+			DurationMs:   time.Since(t1).Milliseconds(),
 		})
 		_ = p.Queue.Complete(ctx, queueExecution, pgbossJobID, nil)
 		return nil
@@ -127,12 +129,12 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 		log.Error("failed to increment executions", "error", err)
 	}
 
+	t2 := time.Now()
+
 	// Cap retries to plan limit
 	msg.MaxRetries = limits.CapRetries(pu.Plan, msg.MaxRetries)
 
 	// 4-5. Dispatch HTTP request
-	log.Info("dispatching", "attempt", msg.Attempt, "endpoint", pu.EndpointURL)
-
 	result, err := p.Dispatcher.Dispatch(ctx, DispatchRequest{
 		EndpointURL:    pu.EndpointURL,
 		CronSecret:     pu.CronSecret,
@@ -144,7 +146,15 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 		Payload:        msg.Payload,
 	})
 
-	durationMs := time.Since(startedAt).Milliseconds()
+	t3 := time.Now()
+	durationMs := t3.Sub(t1).Milliseconds()
+
+	log.Info("timing",
+		"setup_ms", t1.Sub(t0).Milliseconds(),
+		"limits_ms", t2.Sub(t1).Milliseconds(),
+		"http_ms", t3.Sub(t2).Milliseconds(),
+		"total_ms", t3.Sub(t0).Milliseconds(),
+	)
 
 	// Network error / timeout
 	if err != nil {
