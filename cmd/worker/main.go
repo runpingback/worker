@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/caarlos0/env/v11"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/runpingback/worker/internal/config"
 	"github.com/runpingback/worker/internal/db"
@@ -21,9 +20,9 @@ import (
 )
 
 func main() {
-	var cfg config.Config
-	if err := env.Parse(&cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to parse config: %v\n", err)
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
