@@ -229,6 +229,3 @@ func buildRetryMessage(msg QueueMessage) QueueMessage {
 	retry.Attempt = msg.Attempt + 1
 	return retry
 }
-
-// Stub for dispatchFanOut -- replaced by fanout.go in Task 7
-func (p *Processor) dispatchFanOut(ctx context.Context, parent QueueMessage, tasks []limits.Task) {}
