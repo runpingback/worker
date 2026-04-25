@@ -102,7 +102,6 @@ func (s *Store) MarkSuccess(ctx context.Context, id string, r SuccessResult) err
 	query := `
 		UPDATE executions
 		SET status = 'success',
-			started_at = now() - ($2 || ' milliseconds')::interval,
 			completed_at = now(),
 			duration_ms = $2,
 			http_status = $3,
@@ -125,7 +124,6 @@ func (s *Store) MarkFailed(ctx context.Context, id string, r FailResult) error {
 	query := `
 		UPDATE executions
 		SET status = 'failed',
-			started_at = now() - ($2 || ' milliseconds')::interval,
 			completed_at = now(),
 			duration_ms = $2,
 			http_status = $3,
