@@ -206,6 +206,7 @@ func (p *Processor) Process(ctx context.Context, pgbossJobID string, msg QueueMe
 	p.handleFailure(ctx, pgbossJobID, msg, db.FailResult{
 		HttpStatus:   &httpStatus,
 		ErrorMessage: result.ErrorMessage,
+		ResponseBody: result.ResponseBody,
 		Logs:         result.Logs,
 		DurationMs:   durationMs,
 	})

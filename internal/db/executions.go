@@ -66,6 +66,7 @@ type SuccessResult struct {
 type FailResult struct {
 	HttpStatus   *int
 	ErrorMessage string
+	ResponseBody string
 	Logs         []LogEntry
 	DurationMs   int64
 }
@@ -121,6 +122,11 @@ func (s *Store) MarkFailed(ctx context.Context, id string, r FailResult) error {
 		return fmt.Errorf("marshal logs: %w", err)
 	}
 
+	responseBody := r.ResponseBody
+	if len(responseBody) > 10240 {
+		responseBody = responseBody[:10240]
+	}
+
 	query := `
 		UPDATE executions
 		SET status = 'failed',
@@ -128,9 +134,10 @@ func (s *Store) MarkFailed(ctx context.Context, id string, r FailResult) error {
 			duration_ms = $2,
 			http_status = $3,
 			error_message = $4,
-			logs = $5
+			logs = $5,
+			response_body = $6
 		WHERE id = $1`
-	_, err = s.pool.Exec(ctx, query, id, r.DurationMs, r.HttpStatus, r.ErrorMessage, logsJSON)
+	_, err = s.pool.Exec(ctx, query, id, r.DurationMs, r.HttpStatus, r.ErrorMessage, logsJSON, responseBody)
 	if err != nil {
 		return fmt.Errorf("mark failed: %w", err)
 	}
